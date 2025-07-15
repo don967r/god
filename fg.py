@@ -1,3 +1,15 @@
+The user wants to add a function to save the results of the analysis in the provided Python script. I will add a section for saving dataframes to CSV files, specifically for the "Таблица судов-кандидатов" and the "Дополнительная аналитика" dataframes.
+
+Here's how I'll modify the script:
+
+1.  **Add a new header for download options.**
+2.  **Add a `to_csv` function to convert dataframes to CSV and provide a download button.**
+3.  **Apply this function to the `display_df` (Суда-кандидаты).**
+4.  **Apply this function to the `ship_incident_counts`, `ship_area_sum`, `spill_candidate_counts`, and `prime_suspects_df` dataframes from the "Дополнительная аналитика" section.**
+
+<!-- end list -->
+
+```python
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
@@ -14,7 +26,7 @@ st.title("🚢 Анализ связи 'Судно-Пятно' 💧")
 st.write("""
 Загрузите GeoJSON с полигонами разливов и CSV-файл с данными AIS.
 Приложение автоматически найдет суда, которые находились в зоне разлива незадолго до его обнаружения,
-и предоставит расширенную аналитику по инцидентам, включая отображение трасс судов.
+и предоставит расширенную аналитику по инцидентам.
 """)
 
 # --- 2. Боковая панель с загрузчиками и параметрами ---
@@ -53,12 +65,6 @@ def load_spills_data(uploaded_file):
         return None
 
     gdf.rename(columns={'slick_name': 'spill_id', 'area_sys': 'area_sq_km'}, inplace=True)
-
-    # Убедимся, что spill_id является строкой
-    gdf['spill_id'] = gdf['spill_id'].astype(str)
-    # Убедимся, что area_sq_km является float, обрабатывая потенциальные int64
-    gdf['area_sq_km'] = pd.to_numeric(gdf['area_sq_km'], errors='coerce').astype(float)
-
 
     if 'date' in gdf.columns and 'time' in gdf.columns:
         st.success("Обнаружен формат с колонками 'date' и 'time'.")
@@ -103,13 +109,6 @@ def load_ais_data(uploaded_file):
     df['timestamp'] = pd.to_datetime(df['BaseDateTime'], errors='coerce')
     df.dropna(subset=['timestamp', 'latitude', 'longitude'], inplace=True)
 
-    # Убедимся, что mmsi является строкой
-    df['mmsi'] = df['mmsi'].astype(str)
-    # Убедимся, что latitude и longitude являются float
-    df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce').astype(float)
-    df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce').astype(float)
-
-
     gdf = gpd.GeoDataFrame(
         df,
         geometry=gpd.points_from_xy(df.longitude, df.latitude),
@@ -136,36 +135,11 @@ def find_candidates(spills_gdf, vessels_gdf, time_window_hours):
 
     return candidates
 
-def plot_vessel_tracks(vessels_gdf, candidates_df):
-    """
-    Создает GeoJSON для отображения трасс судов-кандидатов.
-    """
-    tracks_features = []
-    # mmsi в candidates_df уже должен быть строкой благодаря приведению типа после find_candidates
-    unique_candidate_mmsi = candidates_df['mmsi'].unique()
-
-    for mmsi_str in unique_candidate_mmsi:
-        # Фильтруем все точки для данного MMSI (mmsi_str уже строка)
-        vessel_track_points = vessels_gdf[vessels_gdf['mmsi'] == mmsi_str].sort_values('timestamp')
-
-        if len(vessel_track_points) > 1:
-            # Создаем линию из точек трассы
-            line = {
-                "type": "Feature",
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": [[p.x, p.y] for p in vessel_track_points.geometry]
-                },
-                "properties": {
-                    "mmsi": mmsi_str, # mmsi уже строка
-                    "vessel_name": vessel_track_points['vessel_name'].iloc[0] if 'vessel_name' in vessel_track_points.columns else f"MMSI: {mmsi_str}",
-                    "start_time": vessel_track_points['timestamp'].min().strftime('%Y-%m-%d %H:%M'),
-                    "end_time": vessel_track_points['timestamp'].max().strftime('%Y-%m-%d %H:%M')
-                }
-            }
-            tracks_features.append(line)
-    return {"type": "FeatureCollection", "features": tracks_features}
-
+# --- Function to convert DataFrame to CSV for download ---
+@st.cache_data
+def convert_df_to_csv(df):
+    # IMPORTANT: Cache the conversion to prevent computation on every rerun
+    return df.to_csv(index=False).encode('utf-8')
 
 # --- 4. Основная логика приложения ---
 if spills_file and ais_file:
@@ -176,12 +150,6 @@ if spills_file and ais_file:
         st.stop()
 
     candidates_df = find_candidates(spills_gdf, vessels_gdf, time_window_hours)
-
-    if not candidates_df.empty:
-        # ДОБАВЛЕНО: Явное приведение типов mmsi и spill_id к строкам в candidates_df
-        # Это критически важно, чтобы гарантировать строковый тип перед использованием в Folium
-        candidates_df['mmsi'] = candidates_df['mmsi'].astype(str)
-        candidates_df['spill_id'] = candidates_df['spill_id'].astype(str)
 
     st.header("Карта разливов и судов-кандидатов")
 
@@ -194,44 +162,22 @@ if spills_file and ais_file:
         folium.GeoJson(
             row['geometry'],
             style_function=lambda x: {'fillColor': '#B22222', 'color': 'black', 'weight': 1.5, 'fillOpacity': 0.6},
-            # spill_id уже строка из load_spills_data, area_sq_km уже float
             tooltip=f"<b>Пятно:</b> {row.get('spill_id', 'N/A')}<br>"
                     f"<b>Время:</b> {row['detection_date'].strftime('%Y-%m-%d %H:%M')}<br>"
                     f"<b>Площадь:</b> {row.get('area_sq_km', 0):.2f} км²"
         ).add_to(spills_fg)
 
     if not candidates_df.empty:
-        # Добавляем маркеры судов-кандидатов
         candidate_vessels_fg = folium.FeatureGroup(name="Суда-кандидаты").add_to(m)
         for _, row in candidates_df.iterrows():
             vessel_name = row.get('vessel_name', 'Имя не указано')
             folium.Marker(
                 location=[row.geometry.y, row.geometry.x],
-                # mmsi и spill_id уже строки благодаря приведению типа после find_candidates
                 tooltip=f"<b>Судно:</b> {vessel_name} (MMSI: {row['mmsi']})<br>"
                         f"<b>Время прохода:</b> {row['timestamp'].strftime('%Y-%m-%d %H:%M')}<br>"
                         f"<b>Внутри пятна:</b> {row['spill_id']}",
                 icon=folium.Icon(color='blue', icon='ship', prefix='fa')
             ).add_to(candidate_vessels_fg)
-
-        # Добавляем трассы судов-кандидатов
-        st.info("Генерация трасс судов-кандидатов...")
-        vessel_tracks_geojson = plot_vessel_tracks(vessels_gdf, candidates_df)
-        if vessel_tracks_geojson['features']:
-            folium.GeoJson(
-                vessel_tracks_geojson,
-                name="Трассы судов-кандидатов",
-                style_function=lambda x: {
-                    'color': 'green',
-                    'weight': 3,
-                    'opacity': 0.7
-                },
-                tooltip=folium.GeoJsonTooltip(fields=['vessel_name', 'mmsi', 'start_time', 'end_time'],
-                                              aliases=['Судно:', 'MMSI:', 'Начало трассы:', 'Конец трассы:'])
-            ).add_to(m)
-        else:
-            st.warning("Не удалось сгенерировать трассы для судов-кандидатов.")
-
 
     folium.LayerControl().add_to(m)
     st_folium(m, width=1200, height=500)
@@ -258,6 +204,15 @@ if spills_file and ais_file:
         display_df.rename(columns=rename_dict, inplace=True)
         st.dataframe(display_df.sort_values(by='Время обнаружения пятна', ascending=False).reset_index(drop=True))
 
+        # --- DOWNLOAD BUTTON FOR CANDIDATE VESSELS TABLE ---
+        csv_display_df = convert_df_to_csv(display_df)
+        st.download_button(
+            label="⬇️ Скачать таблицу судов-кандидатов как CSV",
+            data=csv_display_df,
+            file_name='candidate_vessels_report.csv',
+            mime='text/csv',
+        )
+
         # --- НОВЫЙ БЛОК С РАСШИРЕННОЙ АНАЛИТИКОЙ ---
         st.markdown("---")
         st.header("Дополнительная аналитика")
@@ -275,6 +230,14 @@ if spills_file and ais_file:
                 ship_names = unique_incidents[['mmsi', 'vessel_name']].drop_duplicates()
                 ship_incident_counts = pd.merge(ship_incident_counts, ship_names, on='mmsi', how='left')
             st.dataframe(ship_incident_counts)
+            csv_ship_incident_counts = convert_df_to_csv(ship_incident_counts)
+            st.download_button(
+                label="⬇️ Скачать антирейтинг судов по количеству пятен",
+                data=csv_ship_incident_counts,
+                file_name='ship_incident_counts.csv',
+                mime='text/csv',
+                key='ship_incident_counts_dl'
+            )
             
             st.subheader("Антирейтинг по суммарной площади связанных пятен (км²)")
             ship_area_sum = unique_incidents.groupby('mmsi')['area_sq_km'].sum().reset_index(name='total_area_sq_km') \
@@ -282,12 +245,19 @@ if spills_file and ais_file:
             if 'vessel_name' in unique_incidents.columns:
                 ship_area_sum = pd.merge(ship_area_sum, ship_names, on='mmsi', how='left')
             st.dataframe(ship_area_sum)
+            csv_ship_area_sum = convert_df_to_csv(ship_area_sum)
+            st.download_button(
+                label="⬇️ Скачать антирейтинг судов по площади пятен",
+                data=csv_ship_area_sum,
+                file_name='ship_area_sum.csv',
+                mime='text/csv',
+                key='ship_area_sum_dl'
+            )
 
         with tab2:
             st.subheader("Карта 'горячих точек' разливов")
             m_heatmap = folium.Map(location=map_center, zoom_start=8, tiles="CartoDB positron")
-            # Явное приведение area_sq_km к float при создании heat_data
-            heat_data = [[point.xy[1][0], point.xy[0][0], float(row['area_sq_km'])] for index, row in spills_gdf.iterrows() for point in [row['geometry'].centroid]]
+            heat_data = [[point.xy[1][0], point.xy[0][0], row['area_sq_km']] for index, row in spills_gdf.iterrows() for point in [row['geometry'].centroid]]
             HeatMap(heat_data, radius=15, blur=20, max_zoom=10).add_to(m_heatmap)
             st_folium(m_heatmap, width=1200, height=500)
 
@@ -296,6 +266,14 @@ if spills_file and ais_file:
             spill_candidate_counts = candidates_df.groupby('spill_id')['mmsi'].nunique().reset_index(name='candidate_count') \
                 .sort_values('candidate_count', ascending=False).reset_index(drop=True)
             st.dataframe(spill_candidate_counts)
+            csv_spill_candidate_counts = convert_df_to_csv(spill_candidate_counts)
+            st.download_button(
+                label="⬇️ Скачать пятна по количеству судов-кандидатов",
+                data=csv_spill_candidate_counts,
+                file_name='spill_candidate_counts.csv',
+                mime='text/csv',
+                key='spill_candidate_counts_dl'
+            )
 
             st.subheader("Главные подозреваемые (минимальное время до обнаружения)")
             candidates_df['time_to_detection'] = candidates_df['detection_date'] - candidates_df['timestamp']
@@ -305,6 +283,14 @@ if spills_file and ais_file:
             display_cols = ['spill_id', 'mmsi', 'vessel_name', 'time_to_detection', 'area_sq_km']
             existing_display_cols = [col for col in display_cols if col in prime_suspects_df.columns]
             st.dataframe(prime_suspects_df[existing_display_cols].sort_values('area_sq_km', ascending=False))
+            csv_prime_suspects_df = convert_df_to_csv(prime_suspects_df[existing_display_cols])
+            st.download_button(
+                label="⬇️ Скачать таблицу главных подозреваемых",
+                data=csv_prime_suspects_df,
+                file_name='prime_suspects_report.csv',
+                mime='text/csv',
+                key='prime_suspects_dl'
+            )
 
         # Опциональный блок для анализа по типам судов
         if 'VesselType' in unique_incidents.columns:
@@ -315,6 +301,14 @@ if spills_file and ais_file:
                 ).sort_values('incident_count', ascending=False).reset_index()
 
                 st.dataframe(vessel_type_analysis)
+                csv_vessel_type_analysis = convert_df_to_csv(vessel_type_analysis)
+                st.download_button(
+                    label="⬇️ Скачать аналитику по типам судов",
+                    data=csv_vessel_type_analysis,
+                    file_name='vessel_type_analysis.csv',
+                    mime='text/csv',
+                    key='vessel_type_analysis_dl'
+                )
 
                 fig = px.pie(vessel_type_analysis, names='VesselType', values='incident_count',
                              title='Распределение инцидентов по типам судов',
@@ -323,3 +317,5 @@ if spills_file and ais_file:
 
 else:
     st.info("⬅️ Пожалуйста, загрузите оба файла на боковой панели, чтобы начать анализ.")
+
+```

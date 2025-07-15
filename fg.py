@@ -59,7 +59,8 @@ def load_spills_data(uploaded_file):
         gdf['detection_date'] = pd.to_datetime(gdf['date'] + ' ' + gdf['time'], errors='coerce')
     else:
         st.success("Обнаружен формат с датой в ID пятна. Парсинг 'spill_id'...")
-        gdf['detection_date'] = pd.to_datetime(gdf['spill_id'], format='%Y-%m-%d_%H:%M:%S', errors='coerce')
+        # Убедимся, что spill_id является строкой перед парсингом, чтобы избежать ошибок типа
+        gdf['detection_date'] = pd.to_datetime(gdf['spill_id'].astype(str), format='%Y-%m-%d_%H:%M:%S', errors='coerce')
 
     if gdf['detection_date'].isnull().any():
         failed_count = gdf['detection_date'].isnull().sum()
@@ -97,6 +98,9 @@ def load_ais_data(uploaded_file):
     df['timestamp'] = pd.to_datetime(df['BaseDateTime'], errors='coerce')
     df.dropna(subset=['timestamp', 'latitude', 'longitude'], inplace=True)
 
+    # Убедимся, что mmsi является строкой для корректной обработки в JSON
+    df['mmsi'] = df['mmsi'].astype(str)
+
     gdf = gpd.GeoDataFrame(
         df,
         geometry=gpd.points_from_xy(df.longitude, df.latitude),
@@ -128,11 +132,12 @@ def plot_vessel_tracks(vessels_gdf, candidates_df):
     Создает GeoJSON для отображения трасс судов-кандидатов.
     """
     tracks_features = []
-    unique_candidate_mmsi = candidates_df['mmsi'].unique()
+    # Убедимся, что mmsi в candidates_df также является строкой
+    unique_candidate_mmsi = candidates_df['mmsi'].astype(str).unique()
 
-    for mmsi in unique_candidate_mmsi:
+    for mmsi_str in unique_candidate_mmsi: # Используем mmsi_str, чтобы явно работать со строкой
         # Фильтруем все точки для данного MMSI
-        vessel_track_points = vessels_gdf[vessels_gdf['mmsi'] == mmsi].sort_values('timestamp')
+        vessel_track_points = vessels_gdf[vessels_gdf['mmsi'] == mmsi_str].sort_values('timestamp')
 
         if len(vessel_track_points) > 1:
             # Создаем линию из точек трассы
@@ -143,8 +148,8 @@ def plot_vessel_tracks(vessels_gdf, candidates_df):
                     "coordinates": [[p.x, p.y] for p in vessel_track_points.geometry]
                 },
                 "properties": {
-                    "mmsi": mmsi,
-                    "vessel_name": vessel_track_points['vessel_name'].iloc[0] if 'vessel_name' in vessel_track_points.columns else f"MMSI: {mmsi}",
+                    "mmsi": mmsi_str, # mmsi уже строка
+                    "vessel_name": vessel_track_points['vessel_name'].iloc[0] if 'vessel_name' in vessel_track_points.columns else f"MMSI: {mmsi_str}",
                     "start_time": vessel_track_points['timestamp'].min().strftime('%Y-%m-%d %H:%M'),
                     "end_time": vessel_track_points['timestamp'].max().strftime('%Y-%m-%d %H:%M')
                 }
@@ -186,7 +191,8 @@ if spills_file and ais_file:
             vessel_name = row.get('vessel_name', 'Имя не указано')
             folium.Marker(
                 location=[row.geometry.y, row.geometry.x],
-                tooltip=f"<b>Судно:</b> {vessel_name} (MMSI: {row['mmsi']})<br>"
+                # Убедимся, что mmsi является строкой для tooltip
+                tooltip=f"<b>Судно:</b> {vessel_name} (MMSI: {str(row['mmsi'])})<br>"
                         f"<b>Время прохода:</b> {row['timestamp'].strftime('%Y-%m-%d %H:%M')}<br>"
                         f"<b>Внутри пятна:</b> {row['spill_id']}",
                 icon=folium.Icon(color='blue', icon='ship', prefix='fa')

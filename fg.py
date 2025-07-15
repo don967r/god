@@ -54,15 +54,17 @@ def load_spills_data(uploaded_file):
 
     gdf.rename(columns={'slick_name': 'spill_id', 'area_sys': 'area_sq_km'}, inplace=True)
 
-    # Убедимся, что spill_id является строкой для корректной обработки в JSON и отображения
+    # Убедимся, что spill_id является строкой
     gdf['spill_id'] = gdf['spill_id'].astype(str)
+    # Убедимся, что area_sq_km является float, обрабатывая потенциальные int64
+    gdf['area_sq_km'] = pd.to_numeric(gdf['area_sq_km'], errors='coerce').astype(float)
+
 
     if 'date' in gdf.columns and 'time' in gdf.columns:
         st.success("Обнаружен формат с колонками 'date' и 'time'.")
         gdf['detection_date'] = pd.to_datetime(gdf['date'] + ' ' + gdf['time'], errors='coerce')
     else:
         st.success("Обнаружен формат с датой в ID пятна. Парсинг 'spill_id'...")
-        # Используем уже строковый spill_id для парсинга даты
         gdf['detection_date'] = pd.to_datetime(gdf['spill_id'], format='%Y-%m-%d_%H:%M:%S', errors='coerce')
 
     if gdf['detection_date'].isnull().any():
@@ -101,8 +103,12 @@ def load_ais_data(uploaded_file):
     df['timestamp'] = pd.to_datetime(df['BaseDateTime'], errors='coerce')
     df.dropna(subset=['timestamp', 'latitude', 'longitude'], inplace=True)
 
-    # Убедимся, что mmsi является строкой для корректной обработки в JSON и отображения
+    # Убедимся, что mmsi является строкой
     df['mmsi'] = df['mmsi'].astype(str)
+    # Убедимся, что latitude и longitude являются float
+    df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce').astype(float)
+    df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce').astype(float)
+
 
     gdf = gpd.GeoDataFrame(
         df,
@@ -188,8 +194,8 @@ if spills_file and ais_file:
         folium.GeoJson(
             row['geometry'],
             style_function=lambda x: {'fillColor': '#B22222', 'color': 'black', 'weight': 1.5, 'fillOpacity': 0.6},
-            # Убедимся, что spill_id является строкой для tooltip
-            tooltip=f"<b>Пятно:</b> {row.get('spill_id', 'N/A')}<br>" # spill_id уже строка из load_spills_data
+            # spill_id уже строка из load_spills_data, area_sq_km уже float
+            tooltip=f"<b>Пятно:</b> {row.get('spill_id', 'N/A')}<br>"
                     f"<b>Время:</b> {row['detection_date'].strftime('%Y-%m-%d %H:%M')}<br>"
                     f"<b>Площадь:</b> {row.get('area_sq_km', 0):.2f} км²"
         ).add_to(spills_fg)
@@ -280,7 +286,8 @@ if spills_file and ais_file:
         with tab2:
             st.subheader("Карта 'горячих точек' разливов")
             m_heatmap = folium.Map(location=map_center, zoom_start=8, tiles="CartoDB positron")
-            heat_data = [[point.xy[1][0], point.xy[0][0], row['area_sq_km']] for index, row in spills_gdf.iterrows() for point in [row['geometry'].centroid]]
+            # Явное приведение area_sq_km к float при создании heat_data
+            heat_data = [[point.xy[1][0], point.xy[0][0], float(row['area_sq_km'])] for index, row in spills_gdf.iterrows() for point in [row['geometry'].centroid]]
             HeatMap(heat_data, radius=15, blur=20, max_zoom=10).add_to(m_heatmap)
             st_folium(m_heatmap, width=1200, height=500)
 

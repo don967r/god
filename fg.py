@@ -135,7 +135,7 @@ def plot_vessel_tracks(vessels_gdf, candidates_df):
     Создает GeoJSON для отображения трасс судов-кандидатов.
     """
     tracks_features = []
-    # mmsi в candidates_df уже должен быть строкой из load_ais_data
+    # mmsi в candidates_df уже должен быть строкой благодаря приведению типа после find_candidates
     unique_candidate_mmsi = candidates_df['mmsi'].unique()
 
     for mmsi_str in unique_candidate_mmsi:
@@ -171,6 +171,12 @@ if spills_file and ais_file:
 
     candidates_df = find_candidates(spills_gdf, vessels_gdf, time_window_hours)
 
+    if not candidates_df.empty:
+        # ДОБАВЛЕНО: Явное приведение типов mmsi и spill_id к строкам в candidates_df
+        # Это критически важно, чтобы гарантировать строковый тип перед использованием в Folium
+        candidates_df['mmsi'] = candidates_df['mmsi'].astype(str)
+        candidates_df['spill_id'] = candidates_df['spill_id'].astype(str)
+
     st.header("Карта разливов и судов-кандидатов")
 
     map_center = [spills_gdf.unary_union.centroid.y, spills_gdf.unary_union.centroid.x]
@@ -183,7 +189,7 @@ if spills_file and ais_file:
             row['geometry'],
             style_function=lambda x: {'fillColor': '#B22222', 'color': 'black', 'weight': 1.5, 'fillOpacity': 0.6},
             # Убедимся, что spill_id является строкой для tooltip
-            tooltip=f"<b>Пятно:</b> {str(row.get('spill_id', 'N/A'))}<br>"
+            tooltip=f"<b>Пятно:</b> {row.get('spill_id', 'N/A')}<br>" # spill_id уже строка из load_spills_data
                     f"<b>Время:</b> {row['detection_date'].strftime('%Y-%m-%d %H:%M')}<br>"
                     f"<b>Площадь:</b> {row.get('area_sq_km', 0):.2f} км²"
         ).add_to(spills_fg)
@@ -195,10 +201,10 @@ if spills_file and ais_file:
             vessel_name = row.get('vessel_name', 'Имя не указано')
             folium.Marker(
                 location=[row.geometry.y, row.geometry.x],
-                # Убедимся, что mmsi и spill_id являются строками для tooltip
-                tooltip=f"<b>Судно:</b> {vessel_name} (MMSI: {str(row['mmsi'])})<br>"
+                # mmsi и spill_id уже строки благодаря приведению типа после find_candidates
+                tooltip=f"<b>Судно:</b> {vessel_name} (MMSI: {row['mmsi']})<br>"
                         f"<b>Время прохода:</b> {row['timestamp'].strftime('%Y-%m-%d %H:%M')}<br>"
-                        f"<b>Внутри пятна:</b> {str(row['spill_id'])}",
+                        f"<b>Внутри пятна:</b> {row['spill_id']}",
                 icon=folium.Icon(color='blue', icon='ship', prefix='fa')
             ).add_to(candidate_vessels_fg)
 
